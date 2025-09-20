@@ -1,0 +1,104 @@
+version: "3.9"
+
+services:
+  # PostgreSQL Database
+  database:
+    image: postgres:15-alpine
+    container_name: trading_db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-trading_agent}
+      POSTGRES_USER: ${POSTGRES_USER:-trading_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trading_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Assumes your SQL scripts are in the ./database directory
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      # You can add more init scripts here if needed, they run alphabetically
+      # - ./database/update_schema.sql:/docker-entrypoint-initdb.d/update_schema.sql
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API (FastAPI)
+  backend:
+    build: ./backend
+    container_name: trading_backend
+    ports:
+      - "8000:8000"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}"
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend Application (Streamlit)
+  frontend:
+    build: ./frontend
+    container_name: trading_frontend
+    ports:
+      - "8501:8501"
+    environment:
+      BACKEND_URL: "http://backend:8000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+    # --- Worker 1: Proactive Agent (Forward-Looking) ---
+  agent_worker:
+    build: ./backend # Reuses the backend's Docker image
+    container_name: trading_agent_worker
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}"
+    volumes: # ADDED THIS BLOCK
+      - ./backend:/app
+    depends_on:
+      backend:
+        condition: service_healthy
+    # This command correctly runs your agent_worker.py file once every 24 hours
+    command: >
+      sh -c "while true; do
+               echo 'Agent Worker: Starting daily proactive run.';
+               python agent_worker.py;
+               echo 'Agent Worker: Run complete. Sleeping for 24 hours.';
+               sleep 86400;
+             done"
+    restart: unless-stopped
+
+  # --- Worker 2: P&L Updater (Backward-Looking) ---
+  pnl_updater:
+    build: ./backend # Also reuses the backend's Docker image
+    container_name: pnl_updater_worker
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}"
+    volumes: # ADDED THIS BLOCK
+      - ./backend:/app
+    depends_on:
+      backend:
+        condition: service_healthy
+    # This command correctly runs your updated_pnl.py file once every 12 hours
+    command: >
+      sh -c "while true; do
+               echo 'P&L Updater: Starting performance review.';
+               python updated_pnl.py;
+               echo 'P&L Updater: Review complete. Sleeping for 12 hours.';
+               sleep 43200;
+             done"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
