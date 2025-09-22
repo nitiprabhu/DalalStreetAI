@@ -99,6 +99,28 @@ services:
              done"
     restart: unless-stopped
 
+  # --- Worker 3: Weekly Index Predictor ---
+  weekly_predictor:
+    build: ./backend
+    container_name: weekly_predictor_worker
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      backend:
+        condition: service_healthy
+    # This command now correctly runs your 'weekly_predictory.py' file once every 7 days
+    command: >
+      sh -c "while true; do
+               echo 'Weekly Predictor: Starting weekly prediction and evaluation job.';
+               python weekly_predictory.py;
+               echo 'Weekly Predictor: Job complete. Sleeping for 7 days.';
+               sleep 604800;
+             done"
+    restart: unless-stopped
+
 volumes:
   postgres_data:
     driver: local

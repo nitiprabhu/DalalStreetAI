@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+yfinance
+ta
+langchain
+langchain-openai
+python-multipart
+psycopg2-binary
+sqlalchemy
+alembic
